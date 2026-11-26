@@ -59,7 +59,7 @@ TEMPLATE_EXT = (".tpl", ".tftpl")
 MAX_FILE = 1500000
 MAX_TOTAL = 20000000
 SKIP_DIR_RE = re.compile(r"(?:^|/)(?:examples?|tests?|test-fixtures|fixtures|docs?|\.github|\.terraform|"
-                         r"\.git|\.devcontainer|node_modules|vendor|testdata)/|(?:^|/)(?:test_[^/]*|[^/]*_tests?)\.(?:py|sh|js|rb)$|"
+                         r"\.git|\.devcontainer|node_modules|vendor|testdata)/|(?:^|/)(?:test_[^/]*|[^/]*_tests?|tests?)\.(?:py|sh|js|rb)$|"
                          r"(?:^|/)[^/]*\.tftest\.hcl$", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ NET_SEND = (
 UPLOAD_RE = re.compile(r"\bcurl\s[^\n]*(?:\s-d\b|\s--data(?:-\w+)?\b|\s-F\b|\s--form\b|\s-T\b|\s--upload-file\b|-X\s*POST|--request\s+POST)|"
                        r"\bwget\s[^\n]*--post-(?:data|file)|requests\.(?:post|put)\s*\(|Invoke-(?:WebRequest|RestMethod)[^\n]*-Method\s+Post|"
                        r"\bnc(?:at)?\s+[\w.-]+\s+\d+", re.IGNORECASE)
-CRED_FILE = (r"(?:\.aws/credentials|\.ssh/id_(?:rsa|dsa|ecdsa|ed25519)\b|\.terraform\.d/credentials(?:\.tfrc\.json)?|"
+CRED_FILE = (r"(?:\.aws/credentials|\.ssh/id_(?:rsa|dsa|ecdsa|ed25519)\b(?!\.pub)|\.terraform\.d/credentials(?:\.tfrc\.json)?|"
              r"\.terraformrc\b|credentials\.tfrc\.json|\.kube/config\b|\.docker/config\.json|"
              r"\.config/gcloud/(?:credentials\.db|application_default_credentials\.json|access_tokens\.db|legacy_credentials)|"
              r"\.azure/(?:accessTokens\.json|msal_token_cache|azureProfile\.json)|\.git-credentials|\.netrc\b|"

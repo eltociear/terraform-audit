@@ -84,7 +84,23 @@ sites are scored in `.tf` files — a `curl | sh` in a variable `description` is
 
 ## Calibrated, not noisy
 
-MEASURED_SUMMARY
+Plan- and apply-time code *has* to do things that look alarming out of context. It shells out to
+`aws` / `kubectl` / `jq`, `curl`s release zips and vendor APIs, decodes base64 kubeconfigs, and
+installs agents with `curl | bash` on the VM it creates. Those are **capabilities**. They go to
+an informational tier that never touches the score. Risk comes from **combinations** (env dump +
+send, credential/state file + upload, whole external result → `data "http"`, token + collector
+host) and from specific sinks, weighted by where the code runs.
+
+Measured on the **1,689 most-downloaded registry modules**: 994 in a calibration set (ranks 1-1,000)
+and 695 in a held-out set (ranks 1,001-1,700) that was scanned once with the rules frozen first.
+
+| | Calibration (994) | Held-out (695, blind) |
+| --- | --- | --- |
+| Naive (context-free) pattern pass | 27 flagged (2.7%) | 23 flagged (3.3%) |
+| `terraform-audit` HIGH / CRITICAL | **0** (1 on the first pass, fixed) | **0** |
+| `terraform-audit` MEDIUM | 3 | 4 |
+
+5.3% of the calibration modules run a program at `terraform plan`, and 6.6% run local-exec at apply.
 
 **Full results: [FINDINGS.md](FINDINGS.md).**
 
@@ -118,7 +134,13 @@ r["risk_level"], r["findings"], r["execution"]["plan_time"]
 python3 -m unittest
 ```
 
-TEST_SUMMARY Canaries use reserved `.invalid` / TEST-NET hosts and `CANARY_not_a_real_token`
+16 tests. Thirteen inert malicious canaries must each fire at the expected severity: plan-time env
+exfil via `data "external"` (shell, Python and `.tf.json`), a plan-time script stealing
+`~/.aws/credentials`, state / credential / env-dump exfil through `data "http"`, local-exec
+`curl | sh`, a base64-hidden command, `base64 -d | sh`, a reverse shell, `TF_TOKEN_*` to a
+webhook, and `.bashrc` persistence. Nine benign controls modelled on real modules must stay
+SAFE, or LOW for the VM-side installer. Unit tests cover the HCL lexer (heredocs, nested
+interpolation), module-source risk, source parsing and the exit code. Canaries use reserved `.invalid` / TEST-NET hosts and `CANARY_not_a_real_token`
 strings; nothing in `tests/` is ever executed.
 
 ## Limits

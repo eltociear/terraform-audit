@@ -94,6 +94,14 @@ class Units(unittest.TestCase):
         self.assertIn(("provisioner", ("local-exec",)), kinds)
         self.assertIn(("data", ("external", "x")), kinds)
 
+    def test_public_key_is_not_a_credential(self):
+        self.assertFalse(ta.CRED_RE.search('file("~/.ssh/id_rsa.pub")'))
+        self.assertTrue(ta.CRED_RE.search('cat ~/.ssh/id_rsa'))
+
+    def test_test_files_skipped(self):
+        self.assertTrue(ta.SKIP_DIR_RE.search("/lambdas/notifier/tests.py"))
+        self.assertFalse(ta.SKIP_DIR_RE.search("/scripts/latest.py"))
+
     def test_module_source_risk(self):
         self.assertEqual(ta._module_source_risk("git::https://github.com/a/b.git", None)[0], "LOW")
         self.assertEqual(ta._module_source_risk("git::https://github.com/a/b.git?ref=main", None)[0], "LOW")
