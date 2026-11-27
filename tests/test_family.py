@@ -129,6 +129,9 @@ def no_escape(tc, doc, tmp):
             p = f["file"].replace("\\", "/")
             tc.assertFalse(p.startswith("/") or re.match(r"^[A-Za-z]:", p) or ".." in p.split("/"), p)
             tc.assertNotIn("OUTSIDE-CANARY", f["context"] + f["matched"], f)
+            ctx = f["context"].strip()
+            if len(ctx) > 12 and f["severity"] != "INFO":   # code that only exists outside the tree / archive root
+                tc.assertNotIn(ctx, OUTSIDE_PAYLOAD, f)
 
 
 class Family(unittest.TestCase):
