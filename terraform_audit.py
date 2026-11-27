@@ -212,7 +212,10 @@ SEV_ORDER = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0, "SAFE":
 SEV_NAMES = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
 # `keyword[^\n]*tail` is O(keywords x line length) on one-line (minified / padded) files: a 5 MB
 # line with many `curl ` tokens never finished. Same-line spans are bounded to 4,000 chars.
-_BOUND = lambda rx: rx.replace(r"[^\n]*", r"[^\n]{0,4000}")
+# `\s*\(?\s*\(?\s*` backtracks cubically on long whitespace runs; `\s*(?:\(\s*){0,2}` matches the
+# same strings in linear time.
+_BOUND = lambda rx: (rx.replace(r"[^\n]*", r"[^\n]{0,4000}")
+                     .replace(r"\s*\(?\s*\(?\s*", r"\s*(?:\(\s*){0,2}").replace(r"\s*\(?\s*", r"\s*(?:\(\s*)?"))
 _COMPILED = [(sev.upper(), pg, re.compile(_BOUND(rx), re.IGNORECASE)) for sev, groups in PATTERNS.items()
              for pg in groups for rx in pg["regexes"]]
 NET_RE = re.compile(NET_SEND, re.IGNORECASE)
@@ -525,7 +528,71 @@ def _json_sites(path, text):
 DATA_EXEC = {"external": "external", "http": "http", "shell_script": "shell", "shell_command": "shell",
              "local_command": "shell", "command": "shell", "exec": "shell", "shell": "shell"}
 CTX_RANK = {"plan": 4, "apply": 3, "remote": 1, "deployed": 0}
-SCRIPT_REF_RE = re.compile(r"([\w./${}\-]*?([\w.\-]+\.(?:sh|bash|zsh|py|ps1|psm1|bat|cmd|js|rb|pl)))\b")
+_SCRIPT_REF = re.compile(r"([\w./${}\-]*?([\w.\-]+\.(?:sh|bash|zsh|py|ps1|psm1|bat|cmd|js|rb|pl)))\b")
+_PATH_TOKEN = re.compile(r"[\w./${}\-]+")
+
+
+_EXTS = ("sh", "bash", "zsh", "py", "ps1", "psm1", "bat", "cmd", "js", "rb", "pl")   # _SCRIPT_REF order
+_C2 = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
+
+
+class _RefMatch:
+    def __init__(self, text, s, q, e):
+        self.text, self.s, self.q, self.e = text, s, q, e
+
+    def group(self, i=0):
+        return self.text[self.s:self.e] if i in (0, 1) else self.text[self.q:self.e]
+
+    def start(self, i=0):
+        return self.q if i == 2 else self.s
+
+    def end(self, i=0):
+        return self.e
+
+
+class _ScriptRef:
+    """Linear-time equivalent of _SCRIPT_REF.finditer(text).
+
+    The regex (lazy path prefix + greedy [\\w.-]+ + .ext) is cubic on long runs of word
+    characters: a 20 kB one-line .py never finished. A match never leaves one token of path
+    characters; inside it the regex picks, from the current start s, the first run of [\\w.-]
+    (at or after s) holding a '.ext' + word boundary with at least one char before the dot,
+    preferring the right-most dot, then the alternatives in pattern order. That is replicated
+    here directly (checked against the regex in tests/test_family_extra.py)."""
+
+    def _word(self, ch):
+        return ch.isalnum() or ch == "_"
+
+    def finditer(self, text):
+        for tok in _PATH_TOKEN.finditer(text):
+            s, end = tok.start(), tok.end()
+            while s < end:
+                hit, a = None, s
+                while a < end and hit is None:
+                    while a < end and text[a] not in _C2:
+                        a += 1
+                    b = a
+                    while b < end and text[b] in _C2:
+                        b += 1
+                    q = a   # group 2 starts at the run start (or s, which is <= a)
+                    for k in range(b - 1, q, -1):
+                        if text[k] != ".":
+                            continue
+                        for ext in _EXTS:
+                            e = k + 1 + len(ext)
+                            if text.startswith(ext, k + 1) and (e >= len(text) or not self._word(text[e])):
+                                hit = (q, e)
+                                break
+                        if hit:
+                            break
+                    a = b
+                if hit is None:
+                    break
+                yield _RefMatch(text, s, hit[0], hit[1])
+                s = hit[1] if hit[1] > s else s + 1
+
+
+SCRIPT_REF_RE = _ScriptRef()
 LOCAL_REF_RE = re.compile(r"\blocal\.([A-Za-z_][\w-]*)")
 VAR_REF_RE = re.compile(r"\bvar\.([A-Za-z_][\w-]*)")
 MUTABLE_REF = re.compile(r"^(?:main|master|develop|dev|trunk|HEAD|latest|release|stable)$")
@@ -563,9 +630,13 @@ def _match_patterns(text, path, line_of, base_pos, out, kind):
             if key in lines_seen:
                 continue
             lines_seen.add(key)
-            ls = text.rfind("\n", 0, m.start()) + 1
-            le = text.find("\n", m.end())
-            le = len(text) if le < 0 else le
+            # context = the match's line, clipped to +-300 chars: on a one-line file the full-line
+            # rfind/find/strip per match made this O(matches x n) (80 kB took 34 s)
+            lo = max(0, m.start() - 300)
+            ls = text.rfind("\n", lo, m.start()) + 1 or lo
+            hi = min(len(text), m.end() + 300)
+            le = text.find("\n", m.end(), hi)
+            le = hi if le < 0 else le
             out.append(_item(sev, pg["id"], pg["name"], pg["desc"], path, key[1], m.group(0),
                              text[ls:le], kind))
             ids.add(pg["id"])
