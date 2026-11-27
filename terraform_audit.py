@@ -210,7 +210,10 @@ PATTERNS = {
 SEVERITY_SCORE = {"critical": 25, "high": 15, "medium": 8, "low": 3, "info": 0}
 SEV_ORDER = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0, "SAFE": 0}
 SEV_NAMES = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
-_COMPILED = [(sev.upper(), pg, re.compile(rx, re.IGNORECASE)) for sev, groups in PATTERNS.items()
+# `keyword[^\n]*tail` is O(keywords x line length) on one-line (minified / padded) files: a 5 MB
+# line with many `curl ` tokens never finished. Same-line spans are bounded to 4,000 chars.
+_BOUND = lambda rx: rx.replace(r"[^\n]*", r"[^\n]{0,4000}")
+_COMPILED = [(sev.upper(), pg, re.compile(_BOUND(rx), re.IGNORECASE)) for sev, groups in PATTERNS.items()
              for pg in groups for rx in pg["regexes"]]
 NET_RE = re.compile(NET_SEND, re.IGNORECASE)
 EXFIL_RE = re.compile(EXFIL_HOST, re.IGNORECASE)
