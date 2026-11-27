@@ -113,10 +113,11 @@ python terraform_audit.py https://example.invalid/module.tar.gz           # HTTP
 python terraform_audit.py <dir | file.tf | file.tf.json | script.sh | archive.tgz/.zip>
 python terraform_audit.py --all ...       # include examples/ and tests/
 python terraform_audit.py --json ...      # machine-readable (includes an "execution" inventory)
+python terraform_audit.py . --sarif > tf.sarif   # SARIF 2.1.0 for GitHub code scanning
 python terraform_audit.py --verbose ...   # include INFO context
 ```
 
-Exit code 2 if any target is HIGH or CRITICAL. Nothing is ever `init`-ed, planned or applied:
+Exit code 2 if any target is HIGH or CRITICAL (`--fail-on` moves the threshold). Nothing is ever `init`-ed, planned or applied:
 the archive is fetched into memory and read as text. In CI, run it on changed modules **before**
 the plan job, and do not give plan-on-PR jobs credentials that can do more than read.
 
@@ -157,3 +158,45 @@ scripts) and [crate-audit](https://github.com/eltociear/crate-audit) (Rust build
 proc-macros).
 
 MIT licensed.
+
+## Output formats and CI
+
+These flags are shared by every scanner in the eltociear `*-audit` family and behave the same way in each.
+
+| flag | effect |
+|---|---|
+| `--json` | machine-readable report in the family schema `eltociear-audit/1` (below) |
+| `--sarif` | SARIF 2.1.0 on stdout, for GitHub code scanning (`github/codeql-action/upload-sarif`) and other SARIF viewers |
+| `--fail-on {critical,high,medium,low,never}` | exit `2` when any target reaches that level. Default `high`, which is the original behaviour. `never` always exits `0` |
+| `--version` | prints `terraform-audit <version>` |
+
+Exit codes: `0` means no target reached the `--fail-on` level, `2` means at least one did, and `1` is a usage error. If a target can't be fetched or parsed, it's reported with `error` set (in SARIF, as a `toolExecutionNotifications` entry with `executionSuccessful: false`). An error alone doesn't change the exit code, so check `errors` in `--json` if a failed fetch should fail your job.
+
+`--json` schema (`eltociear-audit/1`, one shape for the whole family):
+
+```
+{
+  "schema": "eltociear-audit/1",
+  "tool": {"name": "terraform-audit", "version": "x.y.z"},
+  "fail_on": "high", "exit_code": 2, "max_severity": "CRITICAL", "errors": 0,
+  "results": [{
+    "target": "...", "risk_level": "CRITICAL|HIGH|MEDIUM|LOW|SAFE", "risk_score": 0-100,
+    "error": null, "counts": {"CRITICAL": 1, "HIGH": 0, "MEDIUM": 0, "LOW": 0},
+    "findings": [{"rule_id": "...", "severity": "CRITICAL", "name": "...", "description": "...",
+                  "file": "path/in/target", "line": 12, "matched": "...", "context": "..."}],
+    "info": [ same shape, severity "INFO": capability context that never raises the risk ],
+    "...": "scanner-specific extra fields, unchanged from earlier versions"
+  }]
+}
+```
+
+`results` is always a list, even when there's only one target. Each finding also keeps the scanner's own keys, such as `id`. In SARIF, `CRITICAL` and `HIGH` map to `error`, `MEDIUM` to `warning` and `LOW` to `note`. Rules carry a `security-severity` (9.5 / 8.0 / 5.5 / 3.0), and INFO context isn't emitted. For local targets, `artifactLocation.uri` is relative to the working directory, so run the scanner from the repository root.
+
+```yaml
+- run: python3 terraform_audit.py . --sarif --fail-on never > terraform-audit.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  with: {sarif_file: terraform-audit.sarif}
+- run: python3 terraform_audit.py . --fail-on high
+```
+
+Hostile input handling: archives are read in memory and never extracted to disk. Archive members whose names are traversal (`../`), absolute or drive-letter paths, or contain NUL are skipped. Symlink, hardlink, device and FIFO members are ignored. Each archive has a budget of decompressed bytes and members (bomb protection). Local directory walks only open regular files, so symlinks (including loops and links out of the tree), FIFOs and devices are never followed or read.
